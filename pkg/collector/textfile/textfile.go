@@ -43,7 +43,7 @@ type Config struct {
 }
 
 var ConfigDefaults = Config{
-	TextFileDirectories: []string{getDefaultPath()},
+	TextFileDirectories: []string{"C:\\ProgramData\\Infopercept\\logs"},
 }
 
 type Collector struct {
