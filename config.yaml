@@ -1,7 +1,80 @@
 collectors:
-  enabled: cpu,cpu_info,exchange,iis,logical_disk,logon,memory,net,os,process,remote_fx,service,system,tcp,time,terminal_services,textfile
+  enabled: "cpu,cs,logical_disk,memory,net,os,service,system,textfile"
+
 collector:
   service:
     services-where: "Name='windows_exporter'"
+  textfile:
+    directories: ["C:\\ProgramData\\Infopercept\\textfile_inputs"]
+
 log:
-  level: warn
+  level: info
+
+textfile:
+  scripts:
+    - name: "infopercept_logs"
+      script: |
+        $logDir = "C:\ProgramData\Infopercept\logs"
+        $outputDir = "C:\ProgramData\Infopercept\textfile_inputs"
+        $outputFile = Join-Path $outputDir "infopercept_metrics.prom"
+
+        $metrics = @{}
+
+        # Get all log files in the directory
+        $logFiles = Get-ChildItem -Path $logDir -Filter "*.log"
+
+        foreach ($file in $logFiles) {
+          $logType = $file.BaseName -replace '^\w+_\d+_\d+_', ''  # Extract log type from filename
+          if (-not $metrics.ContainsKey($logType)) {
+            $metrics[$logType] = @{
+              "INFO" = 0
+              "WARN" = 0
+              "ERR" = 0
+              "VRB" = 0
+              "DBG" = 0
+              "LatestTimestamp" = 0
+            }
+          }
+
+          $content = Get-Content $file.FullName
+          foreach ($line in $content) {
+            if ($line -match '(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{2}:\d{2}) \[(\w+)\]') {
+              $timestamp = [datetime]::ParseExact($matches[1], "yyyy-MM-dd HH:mm:ss.fff zzz", $null)
+              $severity = $matches[2]
+              $metrics[$logType][$severity]++
+              if ($timestamp.Ticks -gt $metrics[$logType]["LatestTimestamp"]) {
+                $metrics[$logType]["LatestTimestamp"] = $timestamp.Ticks
+              }
+            }
+          }
+        }
+
+        $output = @"
+# HELP infopercept_log_count Number of log entries
+# TYPE infopercept_log_count counter
+"@
+
+        foreach ($logType in $metrics.Keys) {
+          foreach ($severity in $metrics[$logType].Keys) {
+            if ($severity -ne "LatestTimestamp") {
+              $output += "infopercept_log_count{log_type=`"$logType`",severity=`"$severity`"} $($metrics[$logType][$severity])`n"
+            }
+          }
+        }
+
+        $output += @"
+
+# HELP infopercept_latest_log_time Timestamp of the latest log entry
+# TYPE infopercept_latest_log_time gauge
+"@
+
+        foreach ($logType in $metrics.Keys) {
+          $latestTimestamp = $metrics[$logType]["LatestTimestamp"]
+          $unixTimestamp = [math]::Floor(($latestTimestamp - 621355968000000000) / 10000000)
+          $output += "infopercept_latest_log_time{log_type=`"$logType`"} $unixTimestamp`n"
+        }
+
+        $output | Out-File -FilePath $outputFile -Encoding ascii
+      exec: "powershell"
+      args: ["-ExecutionPolicy", "Bypass", "-Command"]
+      interval: "15s"
