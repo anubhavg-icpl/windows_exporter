@@ -6,7 +6,7 @@ repository:
   path: github.com/prometheus-community/windows_exporter
 build:
   binaries:
-    - name: windows_exporter
+    - name: invinsense_exporter
   tags:
     all:
       - trimpath
