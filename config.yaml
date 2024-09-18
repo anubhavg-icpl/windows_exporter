@@ -1,88 +1,21 @@
-# Enable only the necessary collectors
+---
 collectors:
-  enabled: "textfile"
+  enabled: textfile
 
-# Textfile collector configuration
 collector:
   textfile:
     directories:
-      - "C:\\ProgramData\\Infopercept\\textfile_inputs"
+      - "C:\\ProgramData\\Infopercept\\logs"
 
-# Custom textfile script configuration
-textfile:
-  scripts:
-    - name: "infopercept_logs_processor"
-      exec: "powershell"
-      args:
-        - "-ExecutionPolicy"
-        - "Bypass"
-        - "-Command"
-      script: |
-        $logDir = "C:\ProgramData\Infopercept\logs"
-        $outputDir = "C:\ProgramData\Infopercept\textfile_inputs"
-        $outputFile = Join-Path $outputDir "infopercept_metrics.prom"
+log:
+  level: info  # This captures all levels of logs: error, warn, info, debug, and verbose
 
-        # Ensure directories exist
-        New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-        New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+scrape:
+  timeout-margin: 0.5
 
-        # Create sample log entries if no logs exist
-        if (!(Get-ChildItem -Path $logDir -Filter "*.log")) {
-            $sampleLogs = @(
-                "2024-09-18 10:00:00.000 +05:30 [INFO] Sample info log",
-                "2024-09-18 10:01:00.000 +05:30 [WARN] Sample warning log",
-                "2024-09-18 10:02:00.000 +05:30 [ERR] Sample error log"
-            )
-            $sampleLogs | Out-File -FilePath "$logDir\sample_20240918.log"
-        }
+telemetry:
+  path: /metrics
+  max-requests: 5
 
-        $metrics = @{}
-        $logFiles = Get-ChildItem -Path $logDir -Filter "*.log"
-
-        foreach ($file in $logFiles) {
-            $logType = $file.BaseName -replace '^\w+_\d+_\d+_', ''
-            if (-not $metrics.ContainsKey($logType)) {
-                $metrics[$logType] = @{
-                    "INFO" = 0; "WARN" = 0; "ERR" = 0; "VRB" = 0; "DBG" = 0
-                    "LatestTimestamp" = 0
-                }
-            }
-
-            Get-Content $file.FullName | ForEach-Object {
-                if ($_ -match '(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{2}:\d{2}) \[(\w+)\]') {
-                    $timestamp = [datetime]::ParseExact($matches[1], "yyyy-MM-dd HH:mm:ss.fff zzz", $null)
-                    $severity = $matches[2]
-                    $metrics[$logType][$severity]++
-                    if ($timestamp.Ticks -gt $metrics[$logType]["LatestTimestamp"]) {
-                        $metrics[$logType]["LatestTimestamp"] = $timestamp.Ticks
-                    }
-                }
-            }
-        }
-
-        $output = @"
-        # HELP infopercept_log_count Number of log entries
-        # TYPE infopercept_log_count counter
-        $($metrics.GetEnumerator() | ForEach-Object {
-            $logType = $_.Key
-            $_.Value.GetEnumerator() | Where-Object { $_.Key -ne "LatestTimestamp" } | ForEach-Object {
-                "infopercept_log_count{log_type=`"$logType`",severity=`"$($_.Key)`"} $($_.Value)"
-            }
-        })
-
-        # HELP infopercept_latest_log_time Timestamp of the latest log entry
-        # TYPE infopercept_latest_log_time gauge
-        $($metrics.GetEnumerator() | ForEach-Object {
-            $logType = $_.Key
-            $unixTimestamp = [math]::Floor(($_.Value["LatestTimestamp"] - 621355968000000000) / 10000000)
-            "infopercept_latest_log_time{log_type=`"$logType`"} $unixTimestamp"
-        })
-        "@
-
-        $output | Out-File -FilePath $outputFile -Encoding ascii
-      interval: "15s"
-
-# Basic Windows Exporter configuration
-windows_exporter:
-  listen_address: "0.0.0.0"
-  listen_port: 9182
+web:
+  listen-address: ":9182"
